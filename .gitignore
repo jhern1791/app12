@@ -1,3 +1,182 @@
-# Build folder and log file
-build/
-build.log
+'use strict';
+
+const stage = document.querySelector('#stage');
+const canvas = document.querySelector('#machine');
+const ctx = canvas.getContext('2d');
+const grab = document.querySelector('#grab');
+const slider = document.querySelector('#travel');
+const status = document.querySelector('#status');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+const stations = [
+  ['Source', 'Ion source', 'The source strips electrons away and feeds charged particles into the beamline.'],
+  ['Focus', 'Magnetic focus', 'Magnetic lenses squeeze the beam so particles stay close to the central axis.'],
+  ['Boost', 'Acceleration', 'Timed electric fields give each packet of particles a push as it passes through the cavities.'],
+  ['Tip', 'Extraction tip', 'The beam exits through the spearhead and leaves a bright trace in the detector.']
+];
+
+const buttons = stations.map(([short], i) => {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.innerHTML = '<span>0' + (i + 1) + '</span>' + short;
+  button.onclick = () => move(i / 3);
+  document.querySelector('#stations').append(button);
+  return button;
+});
+
+let target = 0, position = 0, active = -1, pulse = -Infinity, drag, width, height;
+function move(value) {
+  target = Math.max(0, Math.min(1, value));
+  slider.value = Math.round(target * 100);
+  document.querySelector('#position').value = String(slider.value).padStart(2, '0') + '%';
+  const sector = Math.round(target * 3);
+  if (sector === active) return;
+  active = sector;
+  document.querySelector('#sector').textContent = 'SECTOR 0' + (sector + 1) + ' / 04';
+  document.querySelector('#name').textContent = stations[sector][1];
+  document.querySelector('#info').textContent = stations[sector][2];
+  buttons.forEach((button, i) => button.setAttribute('aria-current', String(i === sector)));
+}
+move(0);
+slider.oninput = () => move(slider.value / 100);
+stage.addEventListener('wheel', event => {
+  if (event.ctrlKey || event.target === slider) return;
+  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? height : 1);
+  if (!delta || (target === 0 && delta < 0) || (target === 1 && delta > 0)) return;
+  event.preventDefault();
+  move(target + delta / 820);
+}, {passive:false});
+grab.onpointerdown = event => {
+  if (event.button !== 0) return;
+  grab.setPointerCapture(event.pointerId);
+  drag = {id:event.pointerId, y:event.clientY, origin:target};
+};
+grab.onpointermove = event => {
+  if (drag?.id === event.pointerId) move(drag.origin + (event.clientY - drag.y) / 420);
+};
+grab.onlostpointercapture = () => { drag = undefined; };
+window.addEventListener('keydown', event => {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.target === slider) return;
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    move(target + (event.key === 'ArrowUp' ? -0.055 : 0.055));
+  }
+});
+let statusTimer;
+document.querySelector('#pulse').onclick = () => {
+  pulse = performance.now();
+  status.textContent = 'PULSE IN FLIGHT';
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { status.textContent = 'FIELD STABLE'; }, 1350);
+};
+
+new ResizeObserver(() => {
+  width = stage.clientWidth;
+  height = stage.clientHeight;
+  const ratio = Math.min(2, devicePixelRatio || 1);
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  ctx.setTransform(ratio,0,0,ratio,0,0);
+}).observe(stage);
+
+function polygon(points, fill, stroke) {
+  ctx.beginPath();
+  points.forEach(([x,y], i) => i ? ctx.lineTo(x,y) : ctx.moveTo(x,y));
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.stroke(); }
+}
+function ellipse(x,y,rx,ry,stroke,fill) {
+  ctx.beginPath();
+  ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!width || !height) return;
+  const still = reduced.matches;
+  position += (target - position) * (still ? 1 : 0.1);
+  ctx.clearRect(0,0,width,height);
+  const compact = width <= 710;
+  const scale = Math.min(1.32, width / (compact ? 540 : 900), height / 610);
+  ctx.save();
+  ctx.translate(width * (compact ? 0.63 : 0.51), height * (compact ? 0.5 : 0.54) + (position - 0.5) * 155 * scale);
+  ctx.scale(scale,scale);
+  const t = still ? 0 : now / 1000;
+  const glow = ctx.createRadialGradient(0,0,10,0,0,235);
+  glow.addColorStop(0,'#20e6c330');
+  glow.addColorStop(1,'#20e6c300');
+  ctx.fillStyle = glow;
+  ctx.fillRect(-235,-235,470,470);
+
+  for (let i=0;i<80;i++) {
+    const y = ((i * 179.93 - t * (13 + i%7 * 5)) % 620 + 620) % 620 - 310;
+    const x = Math.sin(i * 13.86) * (85 + (i%11)*11);
+    ctx.fillStyle = i%6 ? '#78f8de55' : '#baffedbb';
+    ctx.fillRect(x,y,i%6 ? 1 : 2,i%6 ? 2 : 4);
+  }
+  ctx.setLineDash([3,7]);
+  ellipse(0,0,172,216,'#53898166');
+  ellipse(0,0,153,193,'#53898144');
+  ctx.setLineDash([]);
+  for (let i=-12;i<=12;i++) {
+    ctx.fillStyle = i%3 ? '#4b857d66' : '#77e3ccaa';
+    ctx.fillRect(-157,i*17,i%3 ? 5 : 13,1);
+    ctx.fillRect(150,i*17,i%3 ? 5 : 13,1);
+  }
+
+  const metal = ctx.createLinearGradient(-55,0,55,0);
+  ['#14282f','#31565b','#0b2027','#21474a','#6caaa4','#102930'].forEach((color,i) => metal.addColorStop(i/5,color));
+  const energy = ctx.createLinearGradient(-20,0,20,0);
+  ['#42ffe000','#53ffdc99','#eefff4','#53ffdc99','#42ffe000'].forEach((color,i) => energy.addColorStop(i/4,color));
+
+  polygon([[-21,264],[-45,231],[-39,-134],[-19,-173],[19,-173],[39,-134],[45,231],[21,264]],metal,'#579b93');
+  for (const sign of [-1,1]) {
+    polygon([[sign*27,233],[sign*81,185],[sign*68,105],[sign*39,136]],metal,'#447b78');
+    polygon([[sign*35,-100],[sign*75,-152],[sign*51,-147],[sign*22,-115]],metal,'#447b78');
+  }
+  ctx.fillStyle = '#091c22';
+  ctx.fillRect(-17,-169,34,393);
+  ctx.fillStyle = energy;
+  ctx.shadowBlur = 22;
+  ctx.shadowColor = '#45ffd9';
+  ctx.fillRect(-20,-174,40,403);
+  ctx.shadowBlur = 0;
+
+  for (let i=0;i<11;i++) {
+    const y = -121+i*33;
+    const radius = 48 + 20*Math.pow(Math.cos(i*0.68),2);
+    ellipse(0,y,radius,11,'#66b4aa99','#10292dcf');
+    ellipse(0,y-5,radius,10,'#87c9bda0',metal);
+    ellipse(0,y-5,radius-12,6,'#73ffe5cc','#0a2329');
+    ctx.fillStyle = energy;
+    ctx.fillRect(-14,y-9,28,8);
+    ctx.fillStyle = '#8dffdf';
+    for (const side of [-1,1]) ctx.fillRect(side*(radius-7)-2,y-2,4,2);
+  }
+
+  polygon([[0,-295],[-50,-166],[-20,-147],[0,-166],[20,-147],[50,-166]],metal,'#a0f6df');
+  polygon([[0,-295],[-8,-179],[0,-166],[8,-179]],'#affff0','#eafff9');
+  polygon([[-50,-166],[-16,-181],[0,-295]],'#4c8f89a0','#97e1d6');
+  polygon([[50,-166],[16,-181],[0,-295]],'#32665e','#97e1d6');
+
+  const markerY = 223 - position*410;
+  ellipse(0,markerY,97,16,'#a6ffe5','#53ffd820');
+  ellipse(0,markerY,104,22,'#6eeed377');
+  polygon([[104,markerY],[113,markerY-5],[122,markerY],[113,markerY+5]],'#a6ffe5');
+
+  const flight = (now - pulse)/1050;
+  const packet = still ? (flight >= 0 && flight < 1 ? -173 : 225) :
+    (flight >= 0 && flight < 1 ? 236-flight*530 : 225 - (t*170)%398);
+  ctx.shadowBlur = 25;
+  ctx.shadowColor = '#baffec';
+  ellipse(0,packet,5,10,'#e9fff8','#c1ffeb');
+  if (flight >= 1 && flight < 1.3) {
+    const radius = 8 + (flight-1)*130;
+    ellipse(0,-295,radius,radius*0.46,'#c6ffef','#adffeb35');
+  }
+  ctx.restore();
+}
+requestAnimationFrame(frame);
